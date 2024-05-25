@@ -1,6 +1,6 @@
 from django.shortcuts import render, redirect
-import easyocr, cv2, qrcode, os, uuid, re
-import numpy as np
+import qrcode, os, uuid, re, cv2, numpy as np, time, json
+
 
 # from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
@@ -9,11 +9,12 @@ from django.http import HttpResponse
 from django.template import loader
 import base64
 from .models import QR_list
+from .ocrapi import ocr_space_file
 
 
 # Create your views here.
 
-reader = easyocr.Reader(['en'])
+# reader = easyocr.Reader(['en'])
 codes=[]
 
 # print("sample data",result)
@@ -33,6 +34,9 @@ def generateQR(data):
   new_qr.save()
   return f"static/images/QRcodes/{data}.png"
 
+# Use examples:
+
+
 def checkAlreadyGenerated(data):
   # images = [i.split(".")[0] for i in os.listdir(r"static/images/QRcodes/")]
   images = [item.labels for item in QR_list.objects.all()]
@@ -47,6 +51,8 @@ def imshow(request):
   images = [{"code": code, "path": f"/static/images/QRcodes/{code}.png"} for code in codes]
   context = {"images": images}
   return render(request,'data.html',context)
+
+
 def preprocess_image(image):
     # Convert image to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -60,7 +66,6 @@ def preprocess_image(image):
     # Morphological operations to remove noise and close gaps in between letters
     kernel = np.ones((3, 3), np.uint8)
     morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    
     return morph
 
 def base64_to_cv2(image_data):
@@ -81,13 +86,23 @@ def capture_image(request):
     image_bytes = base64_to_cv2(image_bytes)
     # Generate a unique filename
     image_bytes=  preprocess_image(image_bytes)
-    result = reader.readtext(image_bytes, detail = 0)
+    # result = reader.readtext(image_bytes, detail = 0)
+    filename = f"static/images/{int(time.time())}.png"
+    cv2.imwrite(filename, image_bytes)
+    try:
+      result = ocr_space_file(filename=filename, language='pol')
+    except Exception as e:print(e)
+    parsed_text = json.loads(result)["ParsedResults"][0]['ParsedText']
+    lines = parsed_text.split('\r\n')
+    result = [line for line in lines if line.strip()]
+   
     print(result)
     pattern = r'^[A-Z]+_[A-Z]+\d+$'
     for code in result:
       if re.match(pattern, code):
         codes.append(code)
         checkAlreadyGenerated(code)
+    os.remove(filename)
     return redirect("imshow")
   else:
     return JsonResponse({'error': 'Invalid request method'}, status=400)
